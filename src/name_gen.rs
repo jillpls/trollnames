@@ -1,9 +1,9 @@
-use std::fmt::Formatter;
-use crate::data_processing::{Name, SegmentKind, NameSegment};
+use crate::data_processing::{Name, NameSegment, SegmentKind};
 use crate::util::{capitalize, ends_with_consonant, starts_with_consonant};
 use rand::Rng;
 use rand::distr::Distribution;
 use rand::distr::weighted::WeightedIndex;
+use std::fmt::Formatter;
 
 const CUTOFF: f32 = 2.0;
 const VOWELS: [char; 5] = ['a', 'e', 'i', 'o', 'u'];
@@ -14,6 +14,7 @@ fn generate_weights(
     start: bool,
     end: bool,
     middle: bool,
+    gender_ratio: f32,
 ) -> WeightedIndex<f32> {
     WeightedIndex::new(list.iter().map(|segment| {
         let mut value = 0.;
@@ -31,15 +32,15 @@ fn generate_weights(
             value += segment.positional_data.middle
         }
         count = count.max(1.);
-        (value / count).powf(WEIGHT)
+        let value = (value / count).powf(WEIGHT);
+        value * (1. - (gender_ratio - segment.gender_ratio).abs())
     }))
     .unwrap()
 }
 
-
 pub struct GeneratedName {
     name: String,
-    pub elements: Vec<NameSegment>
+    pub elements: Vec<NameSegment>,
 }
 
 impl GeneratedName {
@@ -52,19 +53,31 @@ impl GeneratedName {
 
     pub fn gender(&self) -> f32 {
         let mut count = 0;
-        self.elements.iter().map(|s| {
-            match s.segment_kind {
+        self.elements
+            .iter()
+            .map(|s| match s.segment_kind {
                 SegmentKind::Apostrophe => 0.,
                 _ => {
                     count += 1;
                     s.gender_ratio
                 }
-            }
-        }).sum::<f32>() / (count as f32).max(1.)
+            })
+            .sum::<f32>()
+            / (count as f32).max(1.)
+            * 0.1
+            + self.elements[0].gender_ratio * 0.45
+            + self.elements.last().unwrap().gender_ratio * 0.45
     }
 
     pub fn bake(&mut self) {
-        self.name = capitalize(&self.elements.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""));
+        self.name = capitalize(
+            &self
+                .elements
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(""),
+        );
     }
 }
 
@@ -74,16 +87,33 @@ impl std::fmt::Display for GeneratedName {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct NameGenOptions {
+    pub amount: usize,
+    pub omit_reserved: bool,
+    pub length: f32,
+    pub gender_ratio: f32,
+}
+
+impl Default for NameGenOptions {
+    fn default() -> Self {
+        Self {
+            amount: 5,
+            omit_reserved: true,
+            length: 2.2,
+            gender_ratio: 1.,
+        }
+    }
+}
+
 pub fn generate_names_from_parts(
     parts: &Vec<NameSegment>,
     syllables: &Vec<NameSegment>,
     _: &Vec<Name>,
-    amount: usize,
-    omit_reserved: bool,
-    length: f32,
+    settings: &NameGenOptions,
 ) -> Vec<GeneratedName> {
     let reserved = vec!["jin", "fon", "zen", "zul"];
-    let parts = if omit_reserved {
+    let parts = if settings.omit_reserved {
         parts
             .into_iter()
             .filter(|v| !reserved.iter().any(|s| *s == v.str.as_str()))
@@ -91,24 +121,24 @@ pub fn generate_names_from_parts(
     } else {
         parts.into_iter().collect::<Vec<_>>()
     };
-    let part_weights = generate_weights(&parts, true, true, true);
+    let part_weights = generate_weights(&parts, true, true, true, settings.gender_ratio);
     let first = parts
         .iter()
         .filter(|o| o.positional_data.start > CUTOFF)
         .copied()
         .collect::<Vec<_>>();
-    let first_weights = generate_weights(&first, true, false, false);
+    let first_weights = generate_weights(&first, true, false, false, settings.gender_ratio);
     let second = parts
         .iter()
         .filter(|o| o.positional_data.end > CUTOFF)
         .copied()
         .collect::<Vec<_>>();
-    let second_weights = generate_weights(&second, false, true, false);
+    let second_weights = generate_weights(&second, false, true, false, settings.gender_ratio);
     let middle = syllables
         .iter()
         .filter(|o| o.positional_data.middle > 0.)
         .collect::<Vec<_>>();
-    let middle_weights = generate_weights(&middle, false, false, true);
+    let middle_weights = generate_weights(&middle, false, false, true, settings.gender_ratio);
     let consonant_bounds = middle
         .iter()
         .map(|s| {
@@ -130,13 +160,14 @@ pub fn generate_names_from_parts(
         .filter(|(_, e, _)| !e)
         .map(|(_, _, o)| **o)
         .collect::<Vec<_>>();
-    let open_start_weights = generate_weights(&open_start, false, false, true);
-    let open_end_weights = generate_weights(&open_end, false, false, true);
+    let open_start_weights =
+        generate_weights(&open_start, false, false, true, settings.gender_ratio);
+    let open_end_weights = generate_weights(&open_end, false, false, true, settings.gender_ratio);
     let mut rng = rand::rng();
     let mut generated_results = Vec::new();
-    for _ in 0..amount {
+    for _ in 0..settings.amount {
         let mut generated_name = GeneratedName::new();
-        let mut length = length;
+        let mut length = settings.length;
         if length < 2. {
             if rng.random::<f32>() > (length - 1.) {
                 let result = parts[part_weights.sample(&mut rng)];

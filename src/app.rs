@@ -1,5 +1,5 @@
-use crate::data_processing::{Name, generate_data, NameSegment};
-use crate::name_gen::{generate_names_from_parts, GeneratedName};
+use crate::data_processing::{Name, NameSegment, generate_data, SegmentKind};
+use crate::name_gen::{GeneratedName, NameGenOptions, generate_names_from_parts};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -11,11 +11,9 @@ pub struct NameApp {
     #[serde(skip)]
     generated: Vec<(GeneratedName, bool)>,
     #[serde(skip)]
-    omit_reserved: bool,
+    name_gen_settings: NameGenOptions,
     #[serde(skip)]
-    length: f32,
-    #[serde(skip)]
-    amount: usize,
+    selected_label: Option<usize>
 }
 
 impl Default for NameApp {
@@ -25,11 +23,23 @@ impl Default for NameApp {
             syllables: vec![],
             parts: vec![],
             generated: vec![],
-            omit_reserved: true,
-            length: 2.5,
-            amount: 5,
+            name_gen_settings: NameGenOptions::default(),
+            selected_label: None,
         }
     }
+}
+
+fn gender_text(gender_val: f32) -> String {
+    match gender_val {
+        ..0.05 => "female",
+        ..0.25 => "likely female",
+        ..0.35 => "slightly female",
+        ..0.65 => "neutral",
+        ..0.75 => "slightly male",
+        ..0.95 => "likely male",
+        _ => "male",
+    }
+    .to_string()
 }
 
 impl NameApp {
@@ -82,7 +92,6 @@ impl eframe::App for NameApp {
         //     });
         // });
 
-
         // if *expanded {
         //     ui.label("Derived from:");
         //     for name in r {
@@ -98,7 +107,6 @@ impl eframe::App for NameApp {
         //     ui.separator();
         // }
 
-
         egui::TopBottomPanel::top("Settings").show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("Troll Name Generator");
@@ -112,18 +120,29 @@ impl eframe::App for NameApp {
 
             ui.separator();
             ui.add(
-                egui::Slider::new(&mut self.length, 1.0..=4.0)
+                egui::Slider::new(&mut self.name_gen_settings.length, 1.0..=4.0)
                     .text("Length")
                     .step_by(0.1),
             );
             ui.add(
-                egui::Slider::new(&mut self.amount, 1..=50)
+                egui::Slider::new(&mut self.name_gen_settings.amount, 1..=50)
                     .logarithmic(true)
                     .text("Amount"),
             );
 
+            ui.horizontal(|ui| {
+                ui.label("female");
+                ui.add(
+                    egui::Slider::new(&mut self.name_gen_settings.gender_ratio, 0.0..=1.0)
+                        .show_value(false),
+                );
+                ui.label("male");
+                ui.separator();
+                let val = gender_text(self.name_gen_settings.gender_ratio);
+                ui.label(val);
+            });
             ui.checkbox(
-                &mut self.omit_reserved,
+                &mut self.name_gen_settings.omit_reserved,
                 "Omit reserved (jin, fon, zul, zen)",
             );
 
@@ -132,9 +151,7 @@ impl eframe::App for NameApp {
                     &self.parts,
                     &self.syllables,
                     &self.names,
-                    self.amount,
-                    self.omit_reserved,
-                    self.length,
+                    &self.name_gen_settings,
                 )
                 .into_iter()
                 .map(|v| (v, false))
@@ -143,25 +160,55 @@ impl eframe::App for NameApp {
         });
         let mut selected = None;
 
-        if let Some((i, (n, _))) = self.generated.iter().enumerate().find(|(_, (_,e))| *e) {
-        egui::SidePanel::right("test").show(ctx, | ui | {
-            selected = Some(i);
-            ui.heading(n.to_string());
-            ui.label("Derived from:");
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for name in n.elements.iter().map(|s| s.derived_names.iter()).flatten() {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{} - (", name));
-                        ui.hyperlink(format!(
-                            "https://wowpedia.fandom.com/wiki/{}",
-                            urlencoding::encode(name)
-                        ));
-                        ui.label(")");
+        if let Some((i, (n, _))) = self.generated.iter().enumerate().find(|(_, (_, e))| *e) {
+            egui::SidePanel::right("test").show(ctx, |ui| {
+                selected = Some(i);
+                ui.heading(n.to_string());
+                ui.horizontal(|ui| {
+                    ui.label("Gender: ");
+                    let (v, text) = if n.gender() > 0.5 {
+                        (n.gender(), "male")
+                    } else {
+                        (1. - n.gender(), "female")
+                    };
+                    ui.label(format!("{:.0}% {}", v * 100., text));
+                });
+
+                ui.horizontal(|ui| {
+                    for (i, v) in n.elements.iter().enumerate() {
+                        if v.segment_kind == SegmentKind::Apostrophe { continue; }
+                        let curr = if let Some(c) = self.selected_label {
+                            i == c
+                        } else {
+                            false
+                        };
+                        if ui.selectable_label(curr, v.to_string()).clicked() {
+                            if curr { self.selected_label = None; } else {
+                                self.selected_label = Some(i);
+                            }
+                        };
+                    }
+                });
+                if let Some(sl) = self.selected_label {
+                    ui.separator();
+                    ui.label("Derived from:");
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for name in n.elements[sl].derived_names.iter() {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{} - (", name));
+                                ui.hyperlink_to(
+                                    "link",
+                                    format!(
+                                        "https://wowpedia.fandom.com/wiki/{}",
+                                        urlencoding::encode(name)
+                                    ),
+                                );
+                                ui.label(")");
+                            });
+                        }
                     });
                 }
             });
-        });
-
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -169,20 +216,13 @@ impl eframe::App for NameApp {
                 let mut changed = None;
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for (i, (n, expanded)) in self.generated.iter_mut().enumerate() {
-                        let gender_text = match n.gender() {
-                            ..0.05 => "female",
-                            ..0.25 => "likely female",
-                            ..0.35 => "slightly female",
-                            ..0.65 => "neutral",
-                            ..0.75 => "slightly male",
-                            ..0.95 => "likely male",
-                            _ => "male",
-                        };
                         ui.horizontal(|ui| {
                             ui.strong(n.to_string());
-                            ui.label(" - ");
-                            ui.label(gender_text);
-                            if ui.add(egui::Button::new("Details >>").selected(*expanded)).clicked() {
+                            if ui
+                                .add(egui::Button::new("Details >>").selected(*expanded))
+                                .clicked()
+                            {
+                                self.selected_label = None;
                                 *expanded = !*expanded;
                                 changed = Some(i);
                             }

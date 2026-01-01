@@ -118,10 +118,9 @@ pub fn generate_data() -> (Vec<OutputRecord>, Vec<OutputRecord>, Vec<Name>) {
     let mut by_syllable = HashMap::new();
     for (idx, n) in names.iter().enumerate() {
         for (i, s) in n.syllables.iter().enumerate() {
-            let entry =
-                by_syllable
-                    .entry(s.clone())
-                    .or_insert((vec![], vec![], vec![], 0., 0.));
+            let entry = by_syllable
+                .entry(s.clone())
+                .or_insert((vec![], vec![], vec![], 0., 0.));
             if n.gender == 'm' {
                 entry.3 += 1.;
             } else if n.gender == 'f' {
@@ -258,10 +257,10 @@ pub fn generate_data() -> (Vec<OutputRecord>, Vec<OutputRecord>, Vec<Name>) {
         let record = OutputRecord {
             segment_kind: SegmentKind::Part,
             str,
-             overall_val: value,
-             start_val: *first,
-             end_val: *second,
-             middle_val: 0.,
+            overall_val: value,
+            start_val: *first,
+            end_val: *second,
+            middle_val: 0.,
             names: names.join(";"),
             gender_ratio,
         };
@@ -292,16 +291,16 @@ pub struct PositionalData {
     pub end: f32,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Copy, Clone, Serialize, Deserialize)]
 pub enum SegmentKind {
     Part,
     Syllable,
-    Apostrophe
+    Apostrophe,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NameSegment {
-    pub segment_kind : SegmentKind,
+    pub segment_kind: SegmentKind,
     pub str: String,
     pub derived_names: Vec<String>,
     pub positional_data: PositionalData,
@@ -311,7 +310,7 @@ pub struct NameSegment {
 impl NameSegment {
     pub fn apostrophe() -> NameSegment {
         Self {
-            segment_kind : SegmentKind::Apostrophe,
+            segment_kind: SegmentKind::Apostrophe,
             str: "'".to_string(),
             derived_names: vec![],
             positional_data: PositionalData::default(),
@@ -322,10 +321,14 @@ impl NameSegment {
 
 impl std::fmt::Display for NameSegment {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self.segment_kind {
-            SegmentKind::Apostrophe => "'",
-            _ => self.str.as_str(),
-        })
+        write!(
+            f,
+            "{}",
+            match self.segment_kind {
+                SegmentKind::Apostrophe => "'",
+                _ => self.str.as_str(),
+            }
+        )
     }
 }
 
