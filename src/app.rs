@@ -1,17 +1,21 @@
-use crate::data_processing::{generate_data, Name, OutputRecord};
-use crate::name_gen::generate_names_from_parts;
+use crate::data_processing::{Name, generate_data, NameSegment};
+use crate::name_gen::{generate_names_from_parts, GeneratedName};
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct NameApp {
     names: Vec<Name>,
-    syllables: Vec<OutputRecord>,
-    parts: Vec<OutputRecord>,
+    syllables: Vec<NameSegment>,
+    parts: Vec<NameSegment>,
     #[serde(skip)]
-    generated: Vec<(String, Vec<String>)>,
+    generated: Vec<(GeneratedName, bool)>,
     #[serde(skip)]
-    omit_reserved: bool
+    omit_reserved: bool,
+    #[serde(skip)]
+    length: f32,
+    #[serde(skip)]
+    amount: usize,
 }
 
 impl Default for NameApp {
@@ -21,7 +25,9 @@ impl Default for NameApp {
             syllables: vec![],
             parts: vec![],
             generated: vec![],
-            omit_reserved: true
+            omit_reserved: true,
+            length: 2.5,
+            amount: 5,
         }
     }
 }
@@ -37,7 +43,7 @@ impl NameApp {
         if let Some(storage) = cc.storage {
             eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default()
         } else {
-            let mut r : NameApp = Default::default();
+            let mut r: NameApp = Default::default();
             r.load_from_files();
             r
         }
@@ -45,8 +51,8 @@ impl NameApp {
 
     fn load_from_files(&mut self) {
         let (s, p, n) = generate_data();
-        self.syllables = s;
-        self.parts = p;
+        self.syllables = s.iter().map(|o| o.into()).collect();
+        self.parts = p.iter().map(|p| p.into()).collect();
         self.names = n;
     }
 }
@@ -76,7 +82,24 @@ impl eframe::App for NameApp {
         //     });
         // });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+
+        // if *expanded {
+        //     ui.label("Derived from:");
+        //     for name in r {
+        //         ui.horizontal(|ui| {
+        //             ui.label(format!("{} - (", name));
+        //             ui.hyperlink(format!(
+        //                 "https://wowpedia.fandom.com/wiki/{}",
+        //                 urlencoding::encode(name)
+        //             ));
+        //             ui.label(")");
+        //         });
+        //     }
+        //     ui.separator();
+        // }
+
+
+        egui::TopBottomPanel::top("Settings").show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("Troll Name Generator");
 
@@ -88,17 +111,88 @@ impl eframe::App for NameApp {
             }
 
             ui.separator();
+            ui.add(
+                egui::Slider::new(&mut self.length, 1.0..=4.0)
+                    .text("Length")
+                    .step_by(0.1),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.amount, 1..=50)
+                    .logarithmic(true)
+                    .text("Amount"),
+            );
 
-            ui.checkbox(&mut self.omit_reserved, "Omit reserved (jin, fon, zul, zen)");
+            ui.checkbox(
+                &mut self.omit_reserved,
+                "Omit reserved (jin, fon, zul, zen)",
+            );
 
             if ui.button("Generate Names").clicked() {
-                self.generated = generate_names_from_parts(&self.parts, &self.names, 10, self.omit_reserved);
+                self.generated = generate_names_from_parts(
+                    &self.parts,
+                    &self.syllables,
+                    &self.names,
+                    self.amount,
+                    self.omit_reserved,
+                    self.length,
+                )
+                .into_iter()
+                .map(|v| (v, false))
+                .collect();
             }
+        });
+        let mut selected = None;
 
+        if let Some((i, (n, _))) = self.generated.iter().enumerate().find(|(_, (_,e))| *e) {
+        egui::SidePanel::right("test").show(ctx, | ui | {
+            selected = Some(i);
+            ui.heading(n.to_string());
+            ui.label("Derived from:");
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for name in n.elements.iter().map(|s| s.derived_names.iter()).flatten() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{} - (", name));
+                        ui.hyperlink(format!(
+                            "https://wowpedia.fandom.com/wiki/{}",
+                            urlencoding::encode(name)
+                        ));
+                        ui.label(")");
+                    });
+                }
+            });
+        });
+
+        }
+
+        egui::CentralPanel::default().show(ctx, |ui| {
             if self.generated.len() > 0 {
-                ui.separator();
-                for (n, r) in &self.generated {
-                    ui.strong(n).on_hover_text(format!("Derived from: {}", r.join(", ")));
+                let mut changed = None;
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for (i, (n, expanded)) in self.generated.iter_mut().enumerate() {
+                        let gender_text = match n.gender() {
+                            ..0.05 => "female",
+                            ..0.25 => "likely female",
+                            ..0.35 => "slightly female",
+                            ..0.65 => "neutral",
+                            ..0.75 => "slightly male",
+                            ..0.95 => "likely male",
+                            _ => "male",
+                        };
+                        ui.horizontal(|ui| {
+                            ui.strong(n.to_string());
+                            ui.label(" - ");
+                            ui.label(gender_text);
+                            if ui.add(egui::Button::new("Details >>").selected(*expanded)).clicked() {
+                                *expanded = !*expanded;
+                                changed = Some(i);
+                            }
+                        });
+                    }
+                });
+                if let (Some(prev), Some(selected)) = (selected, changed) {
+                    if prev != selected {
+                        self.generated[prev].1 = false;
+                    }
                 }
             }
 

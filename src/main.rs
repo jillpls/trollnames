@@ -1,15 +1,6 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use rand::distr::Distribution;
-use rand::SeedableRng;
-use serde::{Deserialize, Serialize};
-
-const CUTOFF : f32 = 2.0;
-const VOWELS : [char; 5] = ['a', 'e', 'i', 'o', 'u'];
-const WEIGHT: f32 = 1.;
-
-
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
